@@ -177,6 +177,37 @@ $$ select not exists (
      where shift_id = target_shift
        and status in ('submitted', 'approved')) $$;
 
+-- True once the shift's handover has been approved, i.e. published.
+create or replace function public.shift_handover_approved(target_shift uuid) returns boolean
+  language sql stable security definer set search_path = public as
+$$ select exists (
+     select 1 from public.handovers
+     where shift_id = target_shift and status = 'approved') $$;
+
+-- True when the caller is rostered on the shift that immediately FOLLOWS the
+-- target shift at the same location -- the same "next shift" the notification
+-- trigger in 4.4 fans out to. Without this, an incoming operator is notified
+-- about a handover they cannot read: FR-4.4 (reach the previous shift's
+-- published handover) and FR-8.4 (the notification navigates to it) would both
+-- return zero rows. Mirrors the trigger's boundary and tie handling exactly.
+create or replace function public.is_incoming_for_shift(target_shift uuid) returns boolean
+  language sql stable security definer set search_path = public as
+$$ select exists (
+     select 1
+     from public.shifts outgoing
+     join public.shifts nxt
+       on nxt.location = outgoing.location
+      and nxt.id <> outgoing.id
+      and nxt.starts_at = (
+            select min(s2.starts_at)
+            from public.shifts s2
+            where s2.location = outgoing.location
+              and s2.id <> outgoing.id
+              and s2.starts_at >= outgoing.ends_at)
+     join public.shift_assignments sa on sa.shift_id = nxt.id
+     where outgoing.id = target_shift
+       and sa.user_id = auth.uid()) $$;
+
 -- -----------------------------------------------------------------------------
 -- 4. Triggers
 -- -----------------------------------------------------------------------------
@@ -472,7 +503,14 @@ create policy shift_assignments_delete_supervisor on public.shift_assignments
 drop policy if exists log_entries_select on public.log_entries;
 create policy log_entries_select on public.log_entries
   for select to authenticated
-  using (public.auth_role() = 'supervisor' or public.is_assigned(shift_id));
+  using (
+    public.auth_role() = 'supervisor'
+    or public.is_assigned(shift_id)
+    -- Journey 5.3: the incoming shift reads the source log entries behind a
+    -- published handover, and only once it is published.
+    or (public.shift_handover_approved(shift_id)
+        and public.is_incoming_for_shift(shift_id))
+  );
 
 drop policy if exists log_entries_insert_assigned_operator on public.log_entries;
 create policy log_entries_insert_assigned_operator on public.log_entries
@@ -514,7 +552,12 @@ create policy log_entries_delete_own on public.log_entries
 drop policy if exists handovers_select on public.handovers;
 create policy handovers_select on public.handovers
   for select to authenticated
-  using (public.auth_role() = 'supervisor' or public.is_assigned(shift_id));
+  using (
+    public.auth_role() = 'supervisor'
+    or public.is_assigned(shift_id)
+    -- FR-4.4 / FR-8.4: the incoming shift reads the published handover only.
+    or (status = 'approved' and public.is_incoming_for_shift(shift_id))
+  );
 
 drop policy if exists handovers_insert_assigned_operator on public.handovers;
 create policy handovers_insert_assigned_operator on public.handovers
@@ -594,10 +637,33 @@ create policy notifications_delete_own on public.notifications
 -- 6. Grants
 --
 -- RLS decides which rows are visible; these grants decide which verbs are
--- reachable at all. `anon` is granted nothing: every route is behind a session.
+-- reachable at all. `anon` is granted nothing beyond what a fresh Supabase
+-- project hands it by default, and every policy below is `to authenticated`, so
+-- an anonymous caller is default-denied on every table regardless.
 -- -----------------------------------------------------------------------------
 
 grant usage on schema public to authenticated;
+
+-- Functions default to EXECUTE for PUBLIC, and PostgREST exposes public-schema
+-- functions as RPC, so without this an unauthenticated caller could probe the
+-- helpers directly (e.g. rpc('handover_shift') to map a handover to its shift).
+revoke execute on function
+  public.auth_role(),
+  public.is_assigned(uuid),
+  public.handover_shift(uuid),
+  public.shift_handover_open(uuid),
+  public.shift_handover_approved(uuid),
+  public.is_incoming_for_shift(uuid)
+  from public, anon;
+
+grant execute on function
+  public.auth_role(),
+  public.is_assigned(uuid),
+  public.handover_shift(uuid),
+  public.shift_handover_open(uuid),
+  public.shift_handover_approved(uuid),
+  public.is_incoming_for_shift(uuid)
+  to authenticated;
 
 grant select, insert, update          on public.profiles          to authenticated;
 grant select, insert, update, delete  on public.shifts            to authenticated;

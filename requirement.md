@@ -331,13 +331,19 @@ $$ select exists (
      where shift_id = target_shift and user_id = auth.uid()) $$;
 ```
 
+A third helper, `is_incoming_for_shift(target_shift)`, returns true when the caller is
+rostered on the shift immediately following the target shift at the same location. It
+resolves "next shift" the same way the notification trigger does. Without it an incoming
+operator would be notified about a published handover they could not then read, which
+would make FR-4.4 and FR-8.4 unsatisfiable.
+
 | Table | select | insert | update | delete |
 |---|---|---|---|---|
 | `profiles` | any authenticated user (display names are needed throughout) | own row only (`id = auth.uid()`) | own row; `role` immutable | none |
 | `shifts` | any authenticated user | supervisor | supervisor | supervisor |
 | `shift_assignments` | any authenticated user | supervisor | supervisor | supervisor |
-| `log_entries` | supervisor, or operator assigned to the shift | operator assigned to the shift, and the shift's handover is not `submitted` or `approved` | own entry, same condition | own entry, same condition |
-| `handovers` | supervisor, or operator assigned to the shift | operator assigned to the shift; status must be `draft` | author while status is `draft` or `changes_requested`; supervisor may change only `status`, `reviewed_by`, `reviewed_at` | none |
+| `log_entries` | supervisor; operator assigned to the shift; operator rostered on the *next* shift at that location, once the handover is `approved` | operator assigned to the shift, and the shift's handover is not `submitted` or `approved` | own entry, same condition | own entry, same condition |
+| `handovers` | supervisor; operator assigned to the shift; operator rostered on the *next* shift at that location, when `status = 'approved'` | operator assigned to the shift; status must be `draft` | author while status is `draft` or `changes_requested`; supervisor may change only `status`, `reviewed_by`, `reviewed_at` | none |
 | `handover_reviews` | supervisor, or operator assigned to the reviewed handover's shift | supervisor only | none | none |
 | `notifications` | own rows only (`user_id = auth.uid()`) | none from the client — trigger-inserted only | own rows, `read_at` only | own rows |
 
@@ -347,6 +353,10 @@ Notes:
   a trigger that rejects content changes made by anyone other than the author.
 - Notification inserts come from a `SECURITY DEFINER` trigger on `handovers` that fires
   on the transition into `approved` or `changes_requested`.
+- The incoming shift's read access is deliberately narrow: the handover must be `approved`,
+  so an operator never sees a neighbouring shift's draft or a handover still under review.
+- `EXECUTE` on all `SECURITY DEFINER` helpers is revoked from `public`/`anon` and granted to
+  `authenticated` only, since PostgREST exposes public-schema functions as RPC.
 
 ## 9. Non-functional requirements
 
