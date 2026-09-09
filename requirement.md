@@ -442,3 +442,11 @@ before the next one starts (see CLAUDE.md, "Agent harness").
   **no** for now; supervisors review only.
 - Should the "next shift" for notification purposes be scoped by location only, or also by
   role or team? Assumed **location only** for the demo (FR-8.1).
+- **Saving a revision passes back through `draft`.** FR-5.3 lists `changes_requested →
+  submitted`, but the RLS policy `handovers_update_author` in `0001_init.sql` has
+  `with check (status in ('draft','submitted'))`, so an author-written row can never come
+  back out of an update still in `changes_requested`. An operator who saves a partial
+  revision therefore moves `changes_requested → draft → submitted`. Nothing is lost — the
+  supervisor's feedback lives in the append-only `handover_reviews` and stays on screen —
+  but the intermediate `draft` is a state FR-5.3 does not name. Accept it, or drop the save
+  button so the only way out of `changes_requested` is a resubmit?
