@@ -111,8 +111,14 @@ Each requirement is written so it can be tested. `MUST` is binding.
   than `/login` and `/register`.
 - **FR-1.4** Session refresh MUST happen in `proxy.ts` (see CLAUDE.md, "Next.js 16")
   so server components always see a valid session.
-- **FR-1.5** Email confirmation is disabled in the demo Supabase project so accounts
-  are usable immediately. This system never sends email itself.
+- **FR-1.5** Email confirmation is **off during development**, so accounts are usable
+  immediately and no mail is sent while building. It **MAY be switched on** in the Supabase
+  project for the live demo, to show the real email auth round trip. The register flow MUST
+  support both modes **without a code change**: if `signUp` returns a session, redirect to
+  the calendar; if it returns none, show a "check your inbox to confirm" state rather than
+  appearing to fail, and let the emailed link land on the `/confirm` callback, which
+  exchanges the token for a session. The application itself never sends email; the
+  confirmation mail is sent by Supabase Auth.
 
 **Acceptance:** a new user can register, is redirected to the calendar, and their
 `profiles.role` matches what they selected.
