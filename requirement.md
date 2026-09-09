@@ -111,8 +111,14 @@ Each requirement is written so it can be tested. `MUST` is binding.
   than `/login` and `/register`.
 - **FR-1.4** Session refresh MUST happen in `proxy.ts` (see CLAUDE.md, "Next.js 16")
   so server components always see a valid session.
-- **FR-1.5** Email confirmation is disabled in the demo Supabase project so accounts
-  are usable immediately. This system never sends email itself.
+- **FR-1.5** Email confirmation is **off during development**, so accounts are usable
+  immediately and no mail is sent while building. It **MAY be switched on** in the Supabase
+  project for the live demo, to show the real email auth round trip. The register flow MUST
+  support both modes **without a code change**: if `signUp` returns a session, redirect to
+  the calendar; if it returns none, show a "check your inbox to confirm" state rather than
+  appearing to fail, and let the emailed link land on the `/confirm` callback, which
+  exchanges the token for a session. The application itself never sends email; the
+  confirmation mail is sent by Supabase Auth.
 
 **Acceptance:** a new user can register, is redirected to the calendar, and their
 `profiles.role` matches what they selected.
@@ -325,13 +331,19 @@ $$ select exists (
      where shift_id = target_shift and user_id = auth.uid()) $$;
 ```
 
+A third helper, `is_incoming_for_shift(target_shift)`, returns true when the caller is
+rostered on the shift immediately following the target shift at the same location. It
+resolves "next shift" the same way the notification trigger does. Without it an incoming
+operator would be notified about a published handover they could not then read, which
+would make FR-4.4 and FR-8.4 unsatisfiable.
+
 | Table | select | insert | update | delete |
 |---|---|---|---|---|
 | `profiles` | any authenticated user (display names are needed throughout) | own row only (`id = auth.uid()`) | own row; `role` immutable | none |
 | `shifts` | any authenticated user | supervisor | supervisor | supervisor |
 | `shift_assignments` | any authenticated user | supervisor | supervisor | supervisor |
-| `log_entries` | supervisor, or operator assigned to the shift | operator assigned to the shift, and the shift's handover is not `submitted` or `approved` | own entry, same condition | own entry, same condition |
-| `handovers` | supervisor, or operator assigned to the shift | operator assigned to the shift; status must be `draft` | author while status is `draft` or `changes_requested`; supervisor may change only `status`, `reviewed_by`, `reviewed_at` | none |
+| `log_entries` | supervisor; operator assigned to the shift; operator rostered on the *next* shift at that location, once the handover is `approved` | operator assigned to the shift, and the shift's handover is not `submitted` or `approved` | own entry, same condition | own entry, same condition |
+| `handovers` | supervisor; operator assigned to the shift; operator rostered on the *next* shift at that location, when `status = 'approved'` | operator assigned to the shift; status must be `draft` | author while status is `draft` or `changes_requested`; supervisor may change only `status`, `reviewed_by`, `reviewed_at` | none |
 | `handover_reviews` | supervisor, or operator assigned to the reviewed handover's shift | supervisor only | none | none |
 | `notifications` | own rows only (`user_id = auth.uid()`) | none from the client — trigger-inserted only | own rows, `read_at` only | own rows |
 
@@ -341,6 +353,10 @@ Notes:
   a trigger that rejects content changes made by anyone other than the author.
 - Notification inserts come from a `SECURITY DEFINER` trigger on `handovers` that fires
   on the transition into `approved` or `changes_requested`.
+- The incoming shift's read access is deliberately narrow: the handover must be `approved`,
+  so an operator never sees a neighbouring shift's draft or a handover still under review.
+- `EXECUTE` on all `SECURITY DEFINER` helpers is revoked from `public`/`anon` and granted to
+  `authenticated` only, since PostgREST exposes public-schema functions as RPC.
 
 ## 9. Non-functional requirements
 
@@ -426,3 +442,11 @@ before the next one starts (see CLAUDE.md, "Agent harness").
   **no** for now; supervisors review only.
 - Should the "next shift" for notification purposes be scoped by location only, or also by
   role or team? Assumed **location only** for the demo (FR-8.1).
+- **Saving a revision passes back through `draft`.** FR-5.3 lists `changes_requested →
+  submitted`, but the RLS policy `handovers_update_author` in `0001_init.sql` has
+  `with check (status in ('draft','submitted'))`, so an author-written row can never come
+  back out of an update still in `changes_requested`. An operator who saves a partial
+  revision therefore moves `changes_requested → draft → submitted`. Nothing is lost — the
+  supervisor's feedback lives in the append-only `handover_reviews` and stays on screen —
+  but the intermediate `draft` is a state FR-5.3 does not name. Accept it, or drop the save
+  button so the only way out of `changes_requested` is a resubmit?

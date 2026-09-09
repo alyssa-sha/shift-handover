@@ -68,7 +68,8 @@ lib/
   types/database.ts                 generated Supabase types
 proxy.ts                            session refresh + route protection (root)
 supabase/migrations/                SQL migrations — schema and RLS together
-supabase/seed.sql                   demo shifts, assignments, users
+supabase/seed.sql                   demo shift slots (run second)
+supabase/seed_assignments.sql       rosters registered operators (run after sign-up)
 ```
 
 ## Supabase conventions
@@ -96,7 +97,11 @@ supabase/seed.sql                   demo shifts, assignments, users
   `ANTHROPIC_API_KEY`.
 - `ANTHROPIC_API_KEY` is server-only. Never prefix it `NEXT_PUBLIC_`, never import it into
   a Client Component, and never pass it through a props boundary.
-- Never send a real email from this system, including from tests and seeds.
+- **This application never sends email**, including from tests and seeds — no notification,
+  digest or alert mail is built or triggered (`requirement.md` §4, FR-8.6). The one
+  exception is not ours: Supabase Auth's own confirmation mail, which it sends on sign-up
+  once *Confirm email* is enabled in the project. That toggle is off during development and
+  may be switched on for the live demo (FR-1.5); the register flow handles both.
 - Render user-authored log and handover content as text. No `dangerouslySetInnerHTML`.
 - UI role checks are convenience only. The RLS policy is the actual control, and both must
   exist for every gated action (FR-2.4).
@@ -146,11 +151,13 @@ All four must pass before a commit, and CI (GitHub Actions on push and PR) enfor
 
 `npm run lint` · `npm run typecheck` · `npm test` · `npm run build`
 
-Unit tests cover the pieces where a bug is silent: the handover state machine
+Unit tests cover the pure logic, where a bug is silent: the handover state machine
 (`draft → submitted → approved | changes_requested`), next-shift resolution for
-notification fan-out, severity ordering and formatting, and the AI prompt builder. RLS
-policies get their own tests that authenticate as one user and assert another user's rows
-are invisible.
+notification fan-out, severity ordering and formatting, route protection and redirect
+resolution, and the AI prompt builder. **RLS is verified manually**, through the
+cross-account steps in each milestone's checklist — there is no Docker and so no local
+Postgres to test policies against, and pointing an automated suite at the hosted project
+would mean CI holding two sets of real credentials for a demo.
 
 **No pre-commit hook is installed for this project** — a deliberate decision. Run the gates
 yourself before committing.
