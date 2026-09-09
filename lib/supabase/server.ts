@@ -15,8 +15,11 @@ import type { Database } from "@/lib/types/database";
  * and writes the refreshed cookies onto the response.
  */
 export async function createClient() {
-  const { url, anonKey } = getSupabaseEnv();
+  // `cookies()` first, deliberately. It marks the caller dynamic, so a route
+  // that uses this client is never prerendered at build time and `next build`
+  // does not need real Supabase credentials to succeed.
   const cookieStore = await cookies();
+  const { url, anonKey } = getSupabaseEnv();
 
   return createServerClient<Database>(url, anonKey, {
     cookies: {
