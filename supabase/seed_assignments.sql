@@ -14,10 +14,14 @@
 -- section 9.2). So the accounts are created through /register, which is also
 -- what populates public.profiles via the on_auth_user_created trigger.
 --
--- This file reads whichever operator profiles happen to exist and deals the
--- current week's slots out among them in start-time order, so consecutive slots
--- at a location land on different operators. That is what makes the handover
--- demo work: the outgoing operator hands over to a different incoming operator.
+-- This file reads whichever operator profiles happen to exist and deals each
+-- location's slots out among them in start-time order. The row_number is
+-- partitioned BY LOCATION on purpose. Ranking across all locations made the
+-- sequence alternate by location rather than by slot, so with the two operators
+-- this file asks you to register, one operator got every Terminal 2 slot and the
+-- other got every Ward B slot, and nobody ever handed over to anybody else.
+-- Partitioned, consecutive slots at a location land on different operators,
+-- which is what makes the handover demo work.
 --
 -- Supervisors are intentionally not assigned to shifts; they review only
 -- (requirement.md section 12).
@@ -47,7 +51,7 @@ with operators as (
 ),
 week as (
   select id,
-         row_number() over (order by starts_at, location, id) - 1 as seq
+         row_number() over (partition by location order by starts_at, id) - 1 as seq
   from public.shifts
   where starts_at >= (date_trunc('week', (now() at time zone 'utc'))) at time zone 'utc'
     and starts_at <  (date_trunc('week', (now() at time zone 'utc')) + interval '7 days') at time zone 'utc'
